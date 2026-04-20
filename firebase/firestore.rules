@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isHomeAdmin(homeId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/homes/$(homeId)).data.adminUid == request.auth.uid;
+    }
+
+    function validUserProfileShape() {
+      return request.resource.data.keys().hasOnly([
+        "displayName",
+        "email",
+        "homeId",
+        "notificationsEnabled",
+        "pushToken"
+      ]) &&
+      request.resource.data.homeId is string &&
+      (!("displayName" in request.resource.data) || request.resource.data.displayName is string) &&
+      (!("email" in request.resource.data) || request.resource.data.email is string) &&
+      (!("notificationsEnabled" in request.resource.data) || request.resource.data.notificationsEnabled is bool) &&
+      (!("pushToken" in request.resource.data) || request.resource.data.pushToken is string);
+    }
+
+    function requestedHomeIsOwnedByCaller() {
+      return isHomeAdmin(request.resource.data.homeId);
+    }
+
+    match /users/{userId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId) &&
+        validUserProfileShape() &&
+        requestedHomeIsOwnedByCaller();
+      allow update: if isSelf(userId) &&
+        validUserProfileShape() &&
+        request.resource.data.homeId == resource.data.homeId &&
+        requestedHomeIsOwnedByCaller();
+      allow delete: if isSelf(userId);
+    }
+
+    match /homes/{homeId} {
+      allow read, write: if isHomeAdmin(homeId);
+
+      match /rooms/{roomId} {
+        allow read, write: if isHomeAdmin(homeId);
+      }
+
+      match /devices/{deviceId} {
+        allow read, write: if isHomeAdmin(homeId);
+      }
+
+      match /automations/{automationId} {
+        allow read, write: if isHomeAdmin(homeId);
+      }
+
+      match /events/{eventId} {
+        allow read: if isHomeAdmin(homeId);
+        allow create: if isHomeAdmin(homeId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}
